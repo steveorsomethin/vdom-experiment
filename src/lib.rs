@@ -657,7 +657,6 @@ impl Styles for EmptyStyles {
     }
 }
 
-/// Stores Styles.
 #[derive(Debug)]
 pub struct StyleNode<'n, R> where R: Styles {
     name: CSSStyle,
@@ -666,7 +665,6 @@ pub struct StyleNode<'n, R> where R: Styles {
 }
 
 impl<'n> StyleNode<'n, EmptyStyles> {
-    /// Builds a new storage with a value.
     #[inline]
     pub fn new(name: CSSStyle, value: &'n str,)
                -> StyleNode<'n, EmptyStyles>
@@ -680,7 +678,6 @@ impl<'n> StyleNode<'n, EmptyStyles> {
 }
 
 impl<'n, R> StyleNode<'n, R> where R: Styles {
-    /// Adds a value to the storage.
     #[inline]
     pub fn add_sibling(self, name: CSSStyle, value: &'n str)
                   -> StyleNode<'n, StyleNode<'n, R>>
@@ -817,7 +814,6 @@ impl Elements for EmptyElements {
     }
 }
 
-/// Stores Elements.
 #[derive(Debug)]
 pub struct ElementNode<S, C, R> where S: Styles, C: Elements, R: Elements {
     tag: HTMLTag,
@@ -828,7 +824,6 @@ pub struct ElementNode<S, C, R> where S: Styles, C: Elements, R: Elements {
 }
 
 impl<S, C> ElementNode<S, C, EmptyElements> where S: Styles, C: Elements {
-    /// Builds a new storage with a value.
     #[inline]
     pub fn new(tag: HTMLTag, children: C, styles: S)
                -> ElementNode<S, C, EmptyElements>
@@ -844,7 +839,6 @@ impl<S, C> ElementNode<S, C, EmptyElements> where S: Styles, C: Elements {
 }
 
 impl<S, C, R> ElementNode<S, C, R> where S: Styles, C: Elements, R: Elements {
-    /// Adds a value to the storage.
     #[inline]
     pub fn add_sibling<G, U>(self, tag: HTMLTag, children: G, styles: U)
                   -> ElementNode<U, G, ElementNode<S, C, R>>
@@ -985,7 +979,6 @@ impl<I, D> Elements for D where D: DerefMut<Target=I>, D: Deref<Target=I>, I: El
 macro_rules! element {
 
     (($tag:ident {$attributes:expr} [$($children:tt)*]) $(($siblings:tt))*) => {
-        // /*$crate::elements::*/ElementNode::new(CSSElement::$field, $value)
         // {
             $(
                 element! {$children}
@@ -1000,7 +993,6 @@ macro_rules! element {
     };
 
     (($tag:ident [$($children:tt)*]) $(($siblings:tt))*) => {
-        // /*$crate::elements::*/ElementNode::new(CSSElement::$field, $value)
         // {
             $(
                 element! {$children}
@@ -1027,7 +1019,6 @@ macro_rules! element {
     };
 
     (($tag:ident) $(($siblings:tt))*) => {
-        // /*$crate::elements::*/ElementNode::new(CSSElement::$field, $value)
         // {
             $(
                 element! {($siblings)}
