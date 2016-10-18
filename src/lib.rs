@@ -627,7 +627,7 @@ pub trait Styles where Self::R: Styles {
     fn apply<'a>(&'a self, element_id: i32);
     fn reset<'a>(&'a self, element_id: i32);
     fn diff_apply<'a, P>(&'a mut self, prev_styles: &P, element_id: i32) where P: Styles;
-    fn apply_rest<'a, F: FnOnce(&Self::R)>(&self, f: F);
+    fn apply_sibling<'a, F: FnOnce(&Self::R)>(&self, f: F);
     fn compare(&self, name: CSSStyle, value: &str) -> bool;
 }
 
@@ -648,7 +648,7 @@ impl Styles for EmptyStyles {
         prev_styles.reset(element_id);
     }
 
-    fn apply_rest<'a, F: FnOnce(&Self::R)>(&self, f: F) {
+    fn apply_sibling<'a, F: FnOnce(&Self::R)>(&self, f: F) {
         f(&EmptyStyles);
     }
 
@@ -662,7 +662,7 @@ impl Styles for EmptyStyles {
 pub struct StyleNode<'n, R> where R: Styles {
     name: CSSStyle,
     value: &'n str,
-    rest: R
+    sibling: R
 }
 
 impl<'n> StyleNode<'n, EmptyStyles> {
@@ -674,7 +674,7 @@ impl<'n> StyleNode<'n, EmptyStyles> {
         StyleNode {
             name: name,
             value: value,
-            rest: EmptyStyles
+            sibling: EmptyStyles
         }
     }
 }
@@ -682,13 +682,13 @@ impl<'n> StyleNode<'n, EmptyStyles> {
 impl<'n, R> StyleNode<'n, R> where R: Styles {
     /// Adds a value to the storage.
     #[inline]
-    pub fn add(self, name: CSSStyle, value: &'n str)
+    pub fn add_sibling(self, name: CSSStyle, value: &'n str)
                   -> StyleNode<'n, StyleNode<'n, R>>
     {
         StyleNode {
             name: name,
             value: value,
-            rest: self
+            sibling: self
         }
     }
 }
@@ -697,7 +697,7 @@ impl<'n, R> Styles for StyleNode<'n, R> where R: Styles {
     type R = R;
     #[inline]
     fn apply<'a>(&'a self, element_id: i32) {
-        self.rest.apply(element_id);
+        self.sibling.apply(element_id);
         unsafe {
             set_element_style_str(element_id, self.name, CString::new(self.value).unwrap().as_ptr(), self.value.len() as i32);
         }
@@ -710,7 +710,7 @@ impl<'n, R> Styles for StyleNode<'n, R> where R: Styles {
     }
 
     fn diff_apply<'a, P>(&'a mut self, prev_styles: &P, element_id: i32) where P: Styles {
-        prev_styles.apply_rest(|rest| self.rest.diff_apply(rest, element_id));
+        prev_styles.apply_sibling(|sibling| self.sibling.diff_apply(sibling, element_id));
 
         if !prev_styles.compare(self.name, self.value) {
             unsafe {
@@ -719,8 +719,8 @@ impl<'n, R> Styles for StyleNode<'n, R> where R: Styles {
         }
     }
 
-    fn apply_rest<'a, F: FnOnce(&Self::R)>(&self, f: F) {
-        f(&self.rest);
+    fn apply_sibling<'a, F: FnOnce(&Self::R)>(&self, f: F) {
+        f(&self.sibling);
     }
 
     fn compare(&self, name: CSSStyle, value: &str) -> bool {
@@ -738,7 +738,7 @@ macro_rules! style {
         {
             let styles = StyleNode::new(CSSStyle::$field1, $value1);
             $(
-                let styles = styles.add(CSSStyle::$field, $value);
+                let styles = styles.add_sibling(CSSStyle::$field, $value);
             )+
             styles
         }
@@ -758,7 +758,7 @@ pub trait Elements where Self::U: Styles, Self::C: Elements, Self::R: Elements {
     fn diff_apply<'a, P>(&'a mut self, prev_element: &P, parent_id: i32) where P: Elements, P::C: Elements;
     fn unmount(&self);
     fn apply_children<'a, F: FnOnce(&Self::C)>(&self, f: F);
-    fn apply_rest<'a, F: FnOnce(&Self::R)>(&self, f: F);
+    fn apply_sibling<'a, F: FnOnce(&Self::R)>(&self, f: F);
     fn apply_styles<'a, F: FnOnce(&Self::U)>(&self, f: F);
     fn tag(&self) -> HTMLTag;
     fn element_id(&self) -> i32;
@@ -797,7 +797,7 @@ impl Elements for EmptyElements {
     }
 
     #[inline]
-    fn apply_rest<'a, F: FnOnce(&Self::R)>(&self, f: F) {
+    fn apply_sibling<'a, F: FnOnce(&Self::R)>(&self, f: F) {
         f(&EmptyElements);
     }
 
@@ -824,7 +824,7 @@ pub struct ElementNode<S, C, R> where S: Styles, C: Elements, R: Elements {
     element_id: i32,
     styles: S,
     children: C,
-    rest: R
+    sibling: R
 }
 
 impl<S, C> ElementNode<S, C, EmptyElements> where S: Styles, C: Elements {
@@ -838,7 +838,7 @@ impl<S, C> ElementNode<S, C, EmptyElements> where S: Styles, C: Elements {
             element_id: -1,
             styles: styles,
             children: children,
-            rest: EmptyElements
+            sibling: EmptyElements
         }
     }
 }
@@ -846,7 +846,7 @@ impl<S, C> ElementNode<S, C, EmptyElements> where S: Styles, C: Elements {
 impl<S, C, R> ElementNode<S, C, R> where S: Styles, C: Elements, R: Elements {
     /// Adds a value to the storage.
     #[inline]
-    pub fn add<G, U>(self, tag: HTMLTag, children: G, styles: U)
+    pub fn add_sibling<G, U>(self, tag: HTMLTag, children: G, styles: U)
                   -> ElementNode<U, G, ElementNode<S, C, R>>
                   where G: Elements, U: Styles
     {
@@ -855,7 +855,7 @@ impl<S, C, R> ElementNode<S, C, R> where S: Styles, C: Elements, R: Elements {
             element_id: -1,
             styles: styles,
             children: children,
-            rest: self
+            sibling: self
         }
     }
 }
@@ -875,7 +875,7 @@ impl<S, C, R> Elements for ElementNode<S, C, R> where S: Styles, C: Elements, R:
         };
 
         self.children.apply(element_id);
-        self.rest.apply(parent_id);
+        self.sibling.apply(parent_id);
         self.element_id = element_id;
     }
 
@@ -892,8 +892,8 @@ impl<S, C, R> Elements for ElementNode<S, C, R> where S: Styles, C: Elements, R:
                 self.children.diff_apply(prev_children, element_id);
             });
             
-            prev_element.apply_rest(|prev_rest| {
-                self.rest.diff_apply(prev_rest, parent_id);
+            prev_element.apply_sibling(|prev_sibling| {
+                self.sibling.diff_apply(prev_sibling, parent_id);
             });
         } else {
             prev_element.unmount();
@@ -914,8 +914,8 @@ impl<S, C, R> Elements for ElementNode<S, C, R> where S: Styles, C: Elements, R:
     }
 
     #[inline]
-    fn apply_rest<'a, F: FnOnce(&Self::R)>(&self, f: F) {
-        f(&self.rest);
+    fn apply_sibling<'a, F: FnOnce(&Self::R)>(&self, f: F) {
+        f(&self.sibling);
     }
 
     #[inline]
@@ -961,8 +961,8 @@ impl<I, D> Elements for D where D: DerefMut<Target=I>, D: Deref<Target=I>, I: El
     }
 
     #[inline]
-    fn apply_rest<'a, F: FnOnce(&Self::R)>(&self, f: F) {
-        (**self).apply_rest(f);
+    fn apply_sibling<'a, F: FnOnce(&Self::R)>(&self, f: F) {
+        (**self).apply_sibling(f);
     }
 
     #[inline]
@@ -1077,8 +1077,8 @@ fn make_element<'a>() -> impl Elements + 'a {
 
     let element = ElementNode::new(HTMLTag::div, EmptyElements, style_test3);
     let element = ElementNode::new(HTMLTag::div, element, style_test2);
-    let element = element.add(HTMLTag::div, EmptyElements, EmptyStyles);
-    let element = element.add(HTMLTag::div, EmptyElements, EmptyStyles);
+    let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
+    let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
     let element = ElementNode::new(HTMLTag::div, element, style_test);
     element
 }
@@ -1111,8 +1111,8 @@ fn make_element2<'a>() -> impl Elements + 'a {
 
     let element = ElementNode::new(HTMLTag::div, EmptyElements, style_test3);
     let element = ElementNode::new(HTMLTag::div, element, style_test2);
-    let element = element.add(HTMLTag::div, EmptyElements, EmptyStyles);
-    let element = element.add(HTMLTag::div, EmptyElements, EmptyStyles);
+    let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
+    let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
     let element = ElementNode::new(HTMLTag::div, element, style_test);
     element
 }
@@ -1126,6 +1126,7 @@ pub fn run(diff: bool) {
     prev_element.apply(body);
 
     let end = unsafe{now()};
+    print_type_of(&ElementNode::new(HTMLTag::div, EmptyElements, EmptyStyles));
     println!("Mount Elapsed: {}", (end - start) / 100.0);
     if !diff {
         return;
@@ -1175,9 +1176,9 @@ pub fn run(diff: bool) {
     // } else if (diff == 2) {
     //     let element = ElementNode::new(HTMLTag::div, EmptyElements, style_test3);
     //     let element = ElementNode::new(HTMLTag::div, element, style_test2);
-    //     let element = element.add(HTMLTag::div, EmptyElements, EmptyStyles);
-    //     let element = element.add(HTMLTag::div, EmptyElements, EmptyStyles);
-    //     let element = element.add(HTMLTag::div, EmptyElements, EmptyStyles);
+    //     let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
+    //     let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
+    //     let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
     //     let mut element = ElementNode::new(HTMLTag::div, element, style_test);
     //     element.diff_apply(&prev_element, body);
     // } else if (diff == 3) {
@@ -1188,15 +1189,15 @@ pub fn run(diff: bool) {
     //     };
     //     let element = ElementNode::new(HTMLTag::div, EmptyElements, style_test3);
     //     let element = ElementNode::new(HTMLTag::div, element, style_test2);
-    //     let element = element.add(HTMLTag::div, EmptyElements, EmptyStyles);
-    //     let element = element.add(HTMLTag::div, EmptyElements, EmptyStyles);
+    //     let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
+    //     let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
     //     let mut element = ElementNode::new(HTMLTag::div, element, style_test);
     //     element.diff_apply(&prev_element, body);
     // } else if (diff == 4) {
     //     let element = ElementNode::new(HTMLTag::div, EmptyElements, EmptyStyles);
     //     let element = ElementNode::new(HTMLTag::div, element, style_test2);
-    //     let element = element.add(HTMLTag::div, EmptyElements, EmptyStyles);
-    //     let element = element.add(HTMLTag::div, EmptyElements, EmptyStyles);
+    //     let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
+    //     let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
     //     let mut element = ElementNode::new(HTMLTag::div, element, style_test);
     //     element.diff_apply(&prev_element, body);
     // } else if (diff == 5) {
@@ -1207,8 +1208,8 @@ pub fn run(diff: bool) {
     //     };
     //     let element = ElementNode::new(HTMLTag::div, EmptyElements, style_test3);
     //     let element = ElementNode::new(HTMLTag::div, element, style_test2);
-    //     let element = element.add(HTMLTag::div, EmptyElements, style_test5);
-    //     let element = element.add(HTMLTag::div, EmptyElements, EmptyStyles);
+    //     let element = element.add_sibling(HTMLTag::div, EmptyElements, style_test5);
+    //     let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
     //     let mut element = ElementNode::new(HTMLTag::div, element, style_test);
     //     element.diff_apply(&prev_element, body);
     // }
