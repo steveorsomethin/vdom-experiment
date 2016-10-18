@@ -1,0 +1,10 @@
+[lib]
+crate-type = ["staticlib"]
+
+[package]
+name = "vdom-compare"
+version = "0.1.0"
+authors = ["Steve McGuire <steveorsomethin@gmail.com>"]
+
+[dependencies]
+libc="*"
