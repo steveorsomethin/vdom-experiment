@@ -763,6 +763,23 @@ pub trait Elements where Self::U: Styles, Self::C: Elements, Self::R: Elements {
 
 #[derive(Debug)]
 struct EmptyElements;
+impl EmptyElements {
+    #[inline]
+    pub fn add_sibling<G, U>(self, args: (HTMLTag, G, U))
+                  -> ElementNode<U, G, EmptyElements>
+                  where G: Elements, U: Styles
+    {
+        let (tag, children, styles) = args;
+        ElementNode {
+            tag: tag,
+            element_id: -1,
+            styles: styles,
+            children: children,
+            sibling: self
+        }
+    }
+}
+
 impl Elements for EmptyElements {
     type U = EmptyStyles;
     type C = EmptyElements;
@@ -840,10 +857,11 @@ impl<S, C> ElementNode<S, C, EmptyElements> where S: Styles, C: Elements {
 
 impl<S, C, R> ElementNode<S, C, R> where S: Styles, C: Elements, R: Elements {
     #[inline]
-    pub fn add_sibling<G, U>(self, tag: HTMLTag, children: G, styles: U)
+    pub fn add_sibling<G, U>(self, args: (HTMLTag, G, U))
                   -> ElementNode<U, G, ElementNode<S, C, R>>
                   where G: Elements, U: Styles
     {
+        let (tag, children, styles) = args;
         ElementNode {
             tag: tag,
             element_id: -1,
@@ -974,60 +992,6 @@ impl<I, D> Elements for D where D: DerefMut<Target=I>, D: Deref<Target=I>, I: El
         (**self).element_id()
     }
 }
-
-#[macro_export]
-macro_rules! element {
-
-    (($tag:ident {$attributes:expr} [$($children:tt)*]) $(($siblings:tt))*) => {
-        // {
-            $(
-                element! {$children}
-            )*
-            $(
-                element! {($siblings)}
-            )*
-            println!(stringify!($tag));
-            println!(stringify!($attributes));
-            // element!(($siblings1));
-        // }
-    };
-
-    (($tag:ident [$($children:tt)*]) $(($siblings:tt))*) => {
-        // {
-            $(
-                element! {$children}
-            )*
-            $(
-                element! {($siblings)}
-            )*
-            println!(stringify!($tag));
-            // element!(($siblings1));
-        // }
-    };
-
-
-    (($tag:ident {$attributes:expr}) $(($siblings:tt))*) => {
-        // /*$crate::elements::*/ElementNode::new(CSSElement::$field, $value)
-        // {
-            $(
-                element! {($siblings)}
-            )*
-            println!(stringify!($tag));
-            println!(stringify!($attributes));
-            // element!(($siblings1));
-        // }
-    };
-
-    (($tag:ident) $(($siblings:tt))*) => {
-        // {
-            $(
-                element! {($siblings)}
-            )*
-            println!(stringify!($tag));
-            // element!(($siblings1));
-        // }
-    };
-}
 // Children
 
 #[inline]
@@ -1068,8 +1032,8 @@ fn make_element<'a>() -> impl Elements + 'a {
 
     let element = ElementNode::new(HTMLTag::div, EmptyElements, style_test3);
     let element = ElementNode::new(HTMLTag::div, element, style_test2);
-    let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
-    let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
+    let element = element.add_sibling((HTMLTag::div, EmptyElements, EmptyStyles));
+    let element = element.add_sibling((HTMLTag::div, EmptyElements, EmptyStyles));
     let element = ElementNode::new(HTMLTag::div, element, style_test);
     element
 }
@@ -1102,36 +1066,167 @@ fn make_element2<'a>() -> impl Elements + 'a {
 
     let element = ElementNode::new(HTMLTag::div, EmptyElements, style_test3);
     let element = ElementNode::new(HTMLTag::div, element, style_test2);
-    let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
-    let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
+    let element = element.add_sibling((HTMLTag::div, EmptyElements, EmptyStyles));
+    let element = element.add_sibling((HTMLTag::div, EmptyElements, EmptyStyles));
     let element = ElementNode::new(HTMLTag::div, element, style_test);
     element
 }
 
+#[inline]
+fn diff_element<'a, E>(prev_element: &mut E, body: i32) -> impl Elements + 'a where E: Elements {
+    let style_test = style! {
+        width: "500px",
+        height: "500px",
+        backgroundColor: "yellow"
+    };
+
+    let style_test2 = style! {
+        width: "100px",
+        height: "100px",
+        backgroundColor: "black"
+    };
+
+    let style_test3 = style! {
+        width: "50px",
+        height: "50px",
+        backgroundColor: "green"
+    };
+
+    let style_test4 = style! {
+        width: "10px",
+        height: "10px",
+        backgroundColor: "blue"
+    };
+
+    let element = ElementNode::new(HTMLTag::div, EmptyElements, style_test3);
+    let element = ElementNode::new(HTMLTag::div, element, style_test2);
+    let element = element.add_sibling((HTMLTag::div, EmptyElements, EmptyStyles));
+    let element = element.add_sibling((HTMLTag::div, EmptyElements, EmptyStyles));
+    let mut element = ElementNode::new(HTMLTag::div, element, style_test);
+    element.diff_apply(prev_element, body);
+    element
+}
+
+#[macro_export]
+macro_rules! element {
+    () => {EmptyElements};
+
+    // Reverses child list, so that traversal still happens top down rather than bottom up
+    (($head:tt) $($tail:tt)*) => {
+        {
+            let element = element! {$($tail)*};
+            let element = element.add_sibling(element! {$head});
+            element
+        }
+    };
+    
+    (($tag:ident {$($attrs:tt)*})) => {
+        element! {$tag {$($attrs:tt)*} []}
+    };
+
+    (($tag:ident {$($attrs:tt)*} [$($children:tt)*])) => {
+        element! {$tag {$($attrs:tt)*} [$($children)*]}
+    };
+
+    (($tag:ident [$($children:tt)*])) => {
+        element! {$tag {} [$($children)*]}
+    };
+
+    ($tag:ident) => {
+        (HTMLTag::$tag, EmptyElements, EmptyStyles)
+    };
+
+    ($tag:ident {$($attrs:tt)*} [$($children:tt)*]) => {
+        {
+            let children = element! {$($children)*};
+            ElementNode::new(HTMLTag::$tag, children, EmptyStyles)
+        }
+    };
+}
+
 #[no_mangle]
 pub fn run(diff: bool) {
-    let start = unsafe{now()};
-    let body = unsafe {get_document_body()};
+    use std::fmt::Write;
+    let mut out = String::new();
 
-    let mut prev_element = make_element();
-    prev_element.apply(body);
+    let style_test = style! {
+        width: "500px",
+        height: "500px",
+        backgroundColor: "yellow"
+    };
 
-    let end = unsafe{now()};
-    print_type_of(&ElementNode::new(HTMLTag::div, EmptyElements, EmptyStyles));
-    println!("Mount Elapsed: {}", (end - start) / 100.0);
-    if !diff {
-        return;
-    }
-    let start = unsafe{now()};
-    let mut element = make_element2();
-    element.diff_apply(&prev_element, body);
-    let end = unsafe{now()};
-    println!("Diff Elapsed: {}", (end - start) / 100.0);
+    let style_test2 = style! {
+        width: "100px",
+        height: "100px",
+        backgroundColor: "black"
+    };
 
-    // Box::new(element)
+    let style_test3 = style! {
+        width: "50px",
+        height: "50px",
+        backgroundColor: "green"
+    };
 
-    // let mut element = Box::new(element);
+    let style_test4 = style! {
+        width: "10px",
+        height: "10px",
+        backgroundColor: "blue"
+    };
     
+    // element! {
+    //     (e00 [
+    //         (e10)
+    //         (e11)
+    //         (e12 [
+    //             (e20)
+    //         ])
+    //     ])
+    // };
+
+    // let mut element =  element! {
+    //     (div {style: style_test} [
+    //         (div {style: style_test4})
+    //         (div)
+    //         (div {style: style_test2} [
+    //             (div {style: style_test3})
+    //         ])
+    //     ])
+    // };
+
+    let mut element =  element! {
+        (div [
+            (div)
+            (div)
+            (div [
+                (div)
+            ])
+        ])
+    };
+
+    // print_type_of(&element);
+
+    // let start = unsafe{now()};
+    let body = unsafe {get_document_body()};
+    element.diff_apply(&EmptyElements, body);
+
+    // let mut prev_element = diff_element(&mut EmptyElements, body);
+    // prev_element.apply(body);
+
+    // let end = unsafe{now()};
+    // // let blah: ElementNode<StyleNode<EmptyStyles>, EmptyElements, EmptyElements> = ElementNode::new(HTMLTag::div, EmptyElements, StyleNode::new(CSSStyle::width, "100px"));
+    // // print_type_of(&blah);
+
+    // println!("Mount Elapsed: {}", (end - start) / 100.0);
+    // if !diff {
+    //     return;
+    // }
+    // let start = unsafe{now()};
+    // // let mut element = make_element2();
+    // let mut prev_element = diff_element(&mut prev_element, body);
+    // let end = unsafe{now()};
+    // println!("Diff Elapsed: {}", (end - start) / 100.0);
+
+    // let mut element = Box::new(element);    
     // let ptr = Box::into_raw(element);
     // ptr
     // let prev_element = element;

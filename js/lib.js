@@ -703,7 +703,6 @@ var externs = {
         }
 
         function handler() {
-            //false && console.warn('HANDLER');
             Runtime.dynCall('vii', functionPointer, [contextPointer, 10]);
         };
 
