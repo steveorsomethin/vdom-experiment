@@ -723,7 +723,7 @@ var externs = {
         return OK;
     },
     now: function now() {
-        return performance.now() * 100;
+        return performance.now();
     }
 };
 

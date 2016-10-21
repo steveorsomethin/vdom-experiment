@@ -640,18 +640,22 @@ impl Styles for EmptyStyles {
     fn apply<'a>(&'a self, _: i32) {
     }
 
+    #[inline]
     fn reset<'a>(&'a self, element_id: i32) {
 
     }
 
+    #[inline]
     fn diff_apply<'a, P>(&'a mut self, prev_styles: &P, element_id: i32) where P: Styles {
         prev_styles.reset(element_id);
     }
 
+    #[inline]
     fn apply_sibling<'a, F: FnOnce(&Self::R)>(&self, f: F) {
         f(&EmptyStyles);
     }
 
+    #[inline]
     fn compare(&self, name: CSSStyle, value: &str) -> bool {
         false
     }
@@ -692,7 +696,7 @@ impl<'n, R> StyleNode<'n, R> where R: Styles {
 
 impl<'n, R> Styles for StyleNode<'n, R> where R: Styles {
     type R = R;
-    #[inline]
+    #[inline(always)]
     fn apply<'a>(&'a self, element_id: i32) {
         self.sibling.apply(element_id);
         unsafe {
@@ -700,12 +704,14 @@ impl<'n, R> Styles for StyleNode<'n, R> where R: Styles {
         }
     }
 
+    #[inline]
     fn reset<'a>(&'a self, element_id: i32) {
         unsafe {
             reset_element_style(element_id, self.name);
         }
     }
 
+    #[inline(always)]
     fn diff_apply<'a, P>(&'a mut self, prev_styles: &P, element_id: i32) where P: Styles {
         prev_styles.apply_sibling(|sibling| self.sibling.diff_apply(sibling, element_id));
 
@@ -716,10 +722,12 @@ impl<'n, R> Styles for StyleNode<'n, R> where R: Styles {
         }
     }
 
+    #[inline]
     fn apply_sibling<'a, F: FnOnce(&Self::R)>(&self, f: F) {
         f(&self.sibling);
     }
 
+    #[inline]
     fn compare(&self, name: CSSStyle, value: &str) -> bool {
         self.name == name && self.value == value
     }
@@ -785,7 +793,7 @@ impl Elements for EmptyElements {
     type C = EmptyElements;
     type R = EmptyElements;
 
-    #[inline]
+    #[inline(always)]
     fn apply<'a>(&'a mut self, _: i32) {
 
     }
@@ -795,7 +803,7 @@ impl Elements for EmptyElements {
 
     }
 
-    #[inline]
+    #[inline(always)]
     fn diff_apply<'a, P>(&'a mut self, prev_element: &P, parent_id: i32) where P: Elements, P::C: Elements {
         let element_id = prev_element.element_id();
         if prev_element.tag() != self.tag() {
@@ -877,7 +885,7 @@ impl<S, C, R> Elements for ElementNode<S, C, R> where S: Styles, C: Elements, R:
     type C = C;
     type R = R;
 
-    #[inline]
+    #[inline(always)]
     fn apply<'a>(&'a mut self, parent_id: i32) {
         let element_id = unsafe {
             let element_id = create_element(self.tag);
@@ -891,7 +899,7 @@ impl<S, C, R> Elements for ElementNode<S, C, R> where S: Styles, C: Elements, R:
         self.element_id = element_id;
     }
 
-    #[inline]
+    #[inline(always)]
     fn diff_apply<'a, P>(&'a mut self, prev_element: &P, parent_id: i32) where P: Elements {
         let element_id = prev_element.element_id();
         if prev_element.tag() == self.tag() {
@@ -994,117 +1002,15 @@ impl<I, D> Elements for D where D: DerefMut<Target=I>, D: Deref<Target=I>, I: El
 }
 // Children
 
-#[inline]
-fn make_element<'a>() -> impl Elements + 'a {
-    let style_test = style! {
-        width: "500px",
-        height: "500px",
-        backgroundColor: "black"
+#[macro_export]
+macro_rules! attributes {
+    (style: {$($style:tt)*} $($tail:tt)*) => {
+        style!{$($style)*}
     };
 
-    let style_test2 = style! {
-        width: "100px",
-        height: "100px",
-        backgroundColor: "yellow"
+    (style: $style:ident $($tail:tt)*) => {
+        $style
     };
-
-    let style_test3 = style! {
-        width: "50px",
-        height: "50px",
-        backgroundColor: "blue"
-    };
-
-    let style_test4 = style! {
-        width: "10px",
-        height: "10px",
-        backgroundColor: "green"
-    };
-
-    // element! {
-    //     (div {style: style_test} [
-    //         (div {style: style_test4})
-    //         (div)
-    //         (div {style: style_test2} [
-    //             (div {style: style_test3})
-    //         ])
-    //     ])
-    // };
-
-    let element = ElementNode::new(HTMLTag::div, EmptyElements, style_test3);
-    let element = ElementNode::new(HTMLTag::div, element, style_test2);
-    let element = element.add_sibling((HTMLTag::div, EmptyElements, EmptyStyles));
-    let element = element.add_sibling((HTMLTag::div, EmptyElements, EmptyStyles));
-    let element = ElementNode::new(HTMLTag::div, element, style_test);
-    element
-}
-
-#[inline]
-fn make_element2<'a>() -> impl Elements + 'a {
-    let style_test = style! {
-        width: "500px",
-        height: "500px",
-        backgroundColor: "yellow"
-    };
-
-    let style_test2 = style! {
-        width: "100px",
-        height: "100px",
-        backgroundColor: "black"
-    };
-
-    let style_test3 = style! {
-        width: "50px",
-        height: "50px",
-        backgroundColor: "green"
-    };
-
-    let style_test4 = style! {
-        width: "10px",
-        height: "10px",
-        backgroundColor: "blue"
-    };
-
-    let element = ElementNode::new(HTMLTag::div, EmptyElements, style_test3);
-    let element = ElementNode::new(HTMLTag::div, element, style_test2);
-    let element = element.add_sibling((HTMLTag::div, EmptyElements, EmptyStyles));
-    let element = element.add_sibling((HTMLTag::div, EmptyElements, EmptyStyles));
-    let element = ElementNode::new(HTMLTag::div, element, style_test);
-    element
-}
-
-#[inline]
-fn diff_element<'a, E>(prev_element: &mut E, body: i32) -> impl Elements + 'a where E: Elements {
-    let style_test = style! {
-        width: "500px",
-        height: "500px",
-        backgroundColor: "yellow"
-    };
-
-    let style_test2 = style! {
-        width: "100px",
-        height: "100px",
-        backgroundColor: "black"
-    };
-
-    let style_test3 = style! {
-        width: "50px",
-        height: "50px",
-        backgroundColor: "green"
-    };
-
-    let style_test4 = style! {
-        width: "10px",
-        height: "10px",
-        backgroundColor: "blue"
-    };
-
-    let element = ElementNode::new(HTMLTag::div, EmptyElements, style_test3);
-    let element = ElementNode::new(HTMLTag::div, element, style_test2);
-    let element = element.add_sibling((HTMLTag::div, EmptyElements, EmptyStyles));
-    let element = element.add_sibling((HTMLTag::div, EmptyElements, EmptyStyles));
-    let mut element = ElementNode::new(HTMLTag::div, element, style_test);
-    element.diff_apply(prev_element, body);
-    element
 }
 
 #[macro_export]
@@ -1120,185 +1026,72 @@ macro_rules! element {
         }
     };
     
-    (($tag:ident {$($attrs:tt)*})) => {
-        element! {$tag {$($attrs:tt)*} []}
+    (($tag:ident {$($attrs:tt)*}) $($rest:tt)*) => {
+        element! {$tag {$($attrs)*} [] $($rest)*}
     };
 
-    (($tag:ident {$($attrs:tt)*} [$($children:tt)*])) => {
-        element! {$tag {$($attrs:tt)*} [$($children)*]}
+    (($tag:ident [$($children:tt)*]) $($rest:tt)*) => {
+        element! {$tag {} [$($children)*] $($rest)*}
     };
 
-    (($tag:ident [$($children:tt)*])) => {
-        element! {$tag {} [$($children)*]}
+    (($tag:ident {$($attrs:tt)*} [$($children:tt)*]) $($rest:tt)*) => {
+        element! {$tag {$($attrs)*} [$($children)*] $($rest)*}
+    };
+
+    (($tag:ident) $($rest:tt)*) => {
+        element! {$tag {} [] $($rest)*}
     };
 
     ($tag:ident) => {
         (HTMLTag::$tag, EmptyElements, EmptyStyles)
     };
 
-    ($tag:ident {$($attrs:tt)*} [$($children:tt)*]) => {
+    ($tag:ident {$($attrs:tt)*} [$($children:tt)*] $($rest:tt)*) => {
         {
             let children = element! {$($children)*};
-            ElementNode::new(HTMLTag::$tag, children, EmptyStyles)
+            let element = element! {$($rest)*};
+            let element = element.add_sibling((HTMLTag::$tag, children, attributes! {$($attrs)*}));
+            element
         }
     };
 }
 
 #[no_mangle]
-pub fn run(diff: bool) {
-    use std::fmt::Write;
-    let mut out = String::new();
-
-    let style_test = style! {
-        width: "500px",
-        height: "500px",
-        backgroundColor: "yellow"
-    };
-
-    let style_test2 = style! {
-        width: "100px",
-        height: "100px",
-        backgroundColor: "black"
-    };
-
-    let style_test3 = style! {
-        width: "50px",
-        height: "50px",
-        backgroundColor: "green"
-    };
-
-    let style_test4 = style! {
-        width: "10px",
-        height: "10px",
-        backgroundColor: "blue"
-    };
-    
-    // element! {
-    //     (e00 [
-    //         (e10)
-    //         (e11)
-    //         (e12 [
-    //             (e20)
-    //         ])
-    //     ])
-    // };
-
-    // let mut element =  element! {
-    //     (div {style: style_test} [
-    //         (div {style: style_test4})
-    //         (div)
-    //         (div {style: style_test2} [
-    //             (div {style: style_test3})
-    //         ])
-    //     ])
-    // };
-
+pub fn run_demo(diff: bool) {
+    let mount_start = unsafe{now()};
+    let body = unsafe {get_document_body()};
     let mut element =  element! {
-        (div [
+        (div {style: {width: "500px", height: "500px", backgroundColor: "yellow"}} [
+            (div {style: {width: "10px", height: "10px", backgroundColor: "blue"}})
             (div)
-            (div)
-            (div [
-                (div)
+            (div {style: {width: "100px", height: "100px", backgroundColor: "black"}} [
+                (div {style: {width: "50px", height: "50px", backgroundColor: "green"}})
             ])
         ])
     };
-
-    // print_type_of(&element);
-
-    // let start = unsafe{now()};
-    let body = unsafe {get_document_body()};
     element.diff_apply(&EmptyElements, body);
+    let mount_end = unsafe{now()};
 
-    // let mut prev_element = diff_element(&mut EmptyElements, body);
-    // prev_element.apply(body);
+    if !diff {
+        println!("Mount Elapsed: {}", (mount_end - mount_start));
+        return;
+    }
 
-    // let end = unsafe{now()};
-    // // let blah: ElementNode<StyleNode<EmptyStyles>, EmptyElements, EmptyElements> = ElementNode::new(HTMLTag::div, EmptyElements, StyleNode::new(CSSStyle::width, "100px"));
-    // // print_type_of(&blah);
-
-    // println!("Mount Elapsed: {}", (end - start) / 100.0);
-    // if !diff {
-    //     return;
-    // }
-    // let start = unsafe{now()};
-    // // let mut element = make_element2();
-    // let mut prev_element = diff_element(&mut prev_element, body);
-    // let end = unsafe{now()};
-    // println!("Diff Elapsed: {}", (end - start) / 100.0);
-
-    // let mut element = Box::new(element);    
-    // let ptr = Box::into_raw(element);
-    // ptr
-    // let prev_element = element;
-    // let style_test = style! {
-    //     width: "500px",
-    //     height: "500px",
-    //     backgroundColor: "black"
-    // };
-
-    // let style_test2 = style! {
-    //     width: "100px",
-    //     height: "100px",
-    //     backgroundColor: "yellow"
-    // };
-
-    // let style_test3 = style! {
-    //     width: "50px",
-    //     height: "50px",
-    //     backgroundColor: "blue"
-    // };
-
-    // let style_test4 = style! {
-    //     width: "10px",
-    //     height: "10px",
-    //     backgroundColor: "green"
-    // };
-
-    // if (diff == 1) {
-    //     let element = ElementNode::new(HTMLTag::div, EmptyElements, style_test3);
-    //     let element = ElementNode::new(HTMLTag::div, element, style_test2);
-    //     let mut element = ElementNode::new(HTMLTag::span, element, style_test);
-    //     element.diff_apply(&prev_element, body);
-    // } else if (diff == 2) {
-    //     let element = ElementNode::new(HTMLTag::div, EmptyElements, style_test3);
-    //     let element = ElementNode::new(HTMLTag::div, element, style_test2);
-    //     let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
-    //     let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
-    //     let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
-    //     let mut element = ElementNode::new(HTMLTag::div, element, style_test);
-    //     element.diff_apply(&prev_element, body);
-    // } else if (diff == 3) {
-    //     let style_test3 = style! {
-    //         width: "50px",
-    //         height: "50px",
-    //         backgroundColor: "red"
-    //     };
-    //     let element = ElementNode::new(HTMLTag::div, EmptyElements, style_test3);
-    //     let element = ElementNode::new(HTMLTag::div, element, style_test2);
-    //     let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
-    //     let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
-    //     let mut element = ElementNode::new(HTMLTag::div, element, style_test);
-    //     element.diff_apply(&prev_element, body);
-    // } else if (diff == 4) {
-    //     let element = ElementNode::new(HTMLTag::div, EmptyElements, EmptyStyles);
-    //     let element = ElementNode::new(HTMLTag::div, element, style_test2);
-    //     let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
-    //     let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
-    //     let mut element = ElementNode::new(HTMLTag::div, element, style_test);
-    //     element.diff_apply(&prev_element, body);
-    // } else if (diff == 5) {
-    //     let style_test5 = style! {
-    //         width: "30px",
-    //         height: "30px",
-    //         backgroundColor: "white"
-    //     };
-    //     let element = ElementNode::new(HTMLTag::div, EmptyElements, style_test3);
-    //     let element = ElementNode::new(HTMLTag::div, element, style_test2);
-    //     let element = element.add_sibling(HTMLTag::div, EmptyElements, style_test5);
-    //     let element = element.add_sibling(HTMLTag::div, EmptyElements, EmptyStyles);
-    //     let mut element = ElementNode::new(HTMLTag::div, element, style_test);
-    //     element.diff_apply(&prev_element, body);
-    // }
+    let diff_start = unsafe{now()};
+    let prev_element = element;
+    let mut element =  element! {
+        (div {style: {width: "500px", height: "500px", backgroundColor: "yellow"}} [
+            (div {style: {width: "10px", height: "10px", backgroundColor: "blue"}})
+            (div)
+            (div {style: {width: "100px", height: "100px", backgroundColor: "black"}} [
+                (div {style: {width: "50px", height: "50px", backgroundColor: "green"}})
+            ])
+        ])
+    };
+    element.diff_apply(&prev_element, body);
+    let diff_end = unsafe{now()};
+    println!("Mount Elapsed: {}", (mount_end - mount_start));
+    println!("Diff Elapsed: {}", (diff_end - diff_start));
 }
 
 #[cfg(test)]
