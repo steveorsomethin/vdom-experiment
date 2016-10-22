@@ -8,10 +8,8 @@ fn print_type_of<T>(_: &T) -> () {
         };
     println!("{}", type_name);
 }
-
 use std::ffi::CString;
 use std::os::raw::c_char;
-use std::mem::forget;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
@@ -601,8 +599,9 @@ extern "C" {
     fn set_element_attribute_str(element_id: i32, attr: HTMLAttribute, value: *const c_char, length: i32) -> i32;
     fn set_element_attribute_f32(element_id: i32, attr: HTMLAttribute, value: f32) -> i32;
     fn set_element_style_str(element_id: i32, style: CSSStyle, value: *const c_char, length: i32) -> i32;
-    fn reset_element_style(element_id: i32, style: CSSStyle) -> i32;
     fn set_element_style_f32(element_id: i32, style: CSSStyle, value: f32) -> i32;
+    fn set_element_style_i32(element_id: i32, style: CSSStyle, value: i32) -> i32;
+    fn reset_element_style(element_id: i32, style: CSSStyle) -> i32;
     fn add_event_listener(element_id: i32, event_type: DOMEvent, function_ptr: extern fn(*mut RustObject, i32), function_context: *mut RustObject) -> i32;
     fn remove_event_listener(element_id: i32, event_type: DOMEvent) -> i32;
     fn now() -> f32;
@@ -622,17 +621,48 @@ pub fn callback_junk() {
     // }
 }
 
+// const STRING_SIZE: usize = 32; 
+// #[derive(Debug, PartialEq, Eq)]
+// pub enum SizedString {
+//     Stack(usize, [u8; STRING_SIZE]),
+//     Heap(String)
+// }
+
+// impl SizedString {
+//     fn new(value: &str) -> SizedString {
+//         SizedString::Stack(0, [0u8; STRING_SIZE])
+//         // if value.len() > STRING_SIZE {
+//         //     SizedString::Heap(String::from(value))
+//         // } else  {
+//         //     SizedString::Stack(value.len(), {
+//         //         let mut array = [0u8; STRING_SIZE];
+//         //         for (c, p) in value.chars().zip(array.iter_mut()) {
+//         //             *p = c as u8;
+//         //         }
+//         //         array
+//         //     })
+//         // }
+//     }
+
+//     fn as_ffi(&self) -> (usize, *const c_char) {
+//         match *self {
+//             SizedString::Stack(ref len, ref buffer) => (*len, buffer.as_ptr()),
+//             SizedString::Heap(ref string) => (string.len(), CString::new(string.as_str()).unwrap().as_ptr()),
+//         }
+//     }
+// }
+
 pub trait Styles where Self::R: Styles {
     type R;
     fn apply<'a>(&'a self, element_id: i32);
     fn reset<'a>(&'a self, element_id: i32);
     fn diff_apply<'a, P>(&'a mut self, prev_styles: &P, element_id: i32) where P: Styles;
     fn apply_sibling<'a, F: FnOnce(&Self::R)>(&self, f: F);
-    fn compare(&self, name: CSSStyle, value: &str) -> bool;
+    fn compare(&self, name: CSSStyle, value: i32) -> bool;
 }
 
 #[derive(Debug)]
-struct EmptyStyles;
+pub struct EmptyStyles;
 impl Styles for EmptyStyles {
     type R = EmptyStyles;
 
@@ -656,22 +686,22 @@ impl Styles for EmptyStyles {
     }
 
     #[inline]
-    fn compare(&self, name: CSSStyle, value: &str) -> bool {
+    fn compare(&self, name: CSSStyle, value: i32) -> bool {
         false
     }
 }
 
 #[derive(Debug)]
-pub struct StyleNode<'n, R> where R: Styles {
+pub struct StyleNode<R> where R: Styles {
     name: CSSStyle,
-    value: &'n str,
+    value: i32,
     sibling: R
 }
 
-impl<'n> StyleNode<'n, EmptyStyles> {
+impl StyleNode<EmptyStyles> {
     #[inline]
-    pub fn new(name: CSSStyle, value: &'n str,)
-               -> StyleNode<'n, EmptyStyles>
+    pub fn new(name: CSSStyle, value: i32)
+               -> StyleNode<EmptyStyles>
     {
         StyleNode {
             name: name,
@@ -681,10 +711,10 @@ impl<'n> StyleNode<'n, EmptyStyles> {
     }
 }
 
-impl<'n, R> StyleNode<'n, R> where R: Styles {
+impl<'n, R> StyleNode<R> where R: Styles {
     #[inline]
-    pub fn add_sibling(self, name: CSSStyle, value: &'n str)
-                  -> StyleNode<'n, StyleNode<'n, R>>
+    pub fn add_sibling(self, name: CSSStyle, value: i32)
+                  -> StyleNode<StyleNode<R>>
     {
         StyleNode {
             name: name,
@@ -694,13 +724,13 @@ impl<'n, R> StyleNode<'n, R> where R: Styles {
     }
 }
 
-impl<'n, R> Styles for StyleNode<'n, R> where R: Styles {
+impl<'n, R> Styles for StyleNode<R> where R: Styles {
     type R = R;
-    #[inline(always)]
+    #[inline]
     fn apply<'a>(&'a self, element_id: i32) {
         self.sibling.apply(element_id);
         unsafe {
-            set_element_style_str(element_id, self.name, CString::new(self.value).unwrap().as_ptr(), self.value.len() as i32);
+            set_element_style_i32(element_id, self.name, self.value);
         }
     }
 
@@ -711,13 +741,13 @@ impl<'n, R> Styles for StyleNode<'n, R> where R: Styles {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn diff_apply<'a, P>(&'a mut self, prev_styles: &P, element_id: i32) where P: Styles {
         prev_styles.apply_sibling(|sibling| self.sibling.diff_apply(sibling, element_id));
 
         if !prev_styles.compare(self.name, self.value) {
             unsafe {
-                set_element_style_str(element_id, self.name, CString::new(self.value).unwrap().as_ptr(), self.value.len() as i32);
+                set_element_style_i32(element_id, self.name, self.value);
             }
         }
     }
@@ -728,7 +758,7 @@ impl<'n, R> Styles for StyleNode<'n, R> where R: Styles {
     }
 
     #[inline]
-    fn compare(&self, name: CSSStyle, value: &str) -> bool {
+    fn compare(&self, name: CSSStyle, value: i32) -> bool {
         self.name == name && self.value == value
     }
 }
@@ -769,8 +799,8 @@ pub trait Elements where Self::U: Styles, Self::C: Elements, Self::R: Elements {
     fn element_id(&self) -> i32;
 }
 
-#[derive(Debug)]
-struct EmptyElements;
+#[derive(Debug, PartialEq, Eq)]
+pub struct EmptyElements;
 impl EmptyElements {
     #[inline]
     pub fn add_sibling<G, U>(self, args: (HTMLTag, G, U))
@@ -793,7 +823,7 @@ impl Elements for EmptyElements {
     type C = EmptyElements;
     type R = EmptyElements;
 
-    #[inline(always)]
+    #[inline]
     fn apply<'a>(&'a mut self, _: i32) {
 
     }
@@ -803,7 +833,7 @@ impl Elements for EmptyElements {
 
     }
 
-    #[inline(always)]
+    #[inline]
     fn diff_apply<'a, P>(&'a mut self, prev_element: &P, parent_id: i32) where P: Elements, P::C: Elements {
         let element_id = prev_element.element_id();
         if prev_element.tag() != self.tag() {
@@ -839,7 +869,7 @@ impl Elements for EmptyElements {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ElementNode<S, C, R> where S: Styles, C: Elements, R: Elements {
     tag: HTMLTag,
     element_id: i32,
@@ -885,7 +915,7 @@ impl<S, C, R> Elements for ElementNode<S, C, R> where S: Styles, C: Elements, R:
     type C = C;
     type R = R;
 
-    #[inline(always)]
+    #[inline]
     fn apply<'a>(&'a mut self, parent_id: i32) {
         let element_id = unsafe {
             let element_id = create_element(self.tag);
@@ -899,7 +929,7 @@ impl<S, C, R> Elements for ElementNode<S, C, R> where S: Styles, C: Elements, R:
         self.element_id = element_id;
     }
 
-    #[inline(always)]
+    #[inline]
     fn diff_apply<'a, P>(&'a mut self, prev_element: &P, parent_id: i32) where P: Elements {
         let element_id = prev_element.element_id();
         if prev_element.tag() == self.tag() {
@@ -1056,42 +1086,125 @@ macro_rules! element {
     };
 }
 
+#[macro_export]
+macro_rules! attribute_type {
+    () => {
+        EmptyStyles
+    };
+
+    (style: {$($style:tt)*} $($tail:tt)*) => {
+        style_type!{$($style)*}
+    };
+
+    (style: $style:ident $($tail:tt)*) => {
+        StyleNode<EmptyStyles>
+    };
+}
+
+#[macro_export]
+macro_rules! style_type {
+    () => {
+        EmptyStyles
+    };
+
+    ($field:ident: $value:expr, $($rest:tt)*) => {
+        StyleNode<style_type!{$($rest)*}>
+    };
+
+    ($field:ident: $value:expr) => {
+        StyleNode<EmptyStyles>
+    };
+}
+
+macro_rules! element_type {
+    () => {
+        EmptyElements
+    };
+
+    (($tag:ident {$($attrs:tt)*}) $($rest:tt)*) => {
+        element_type! {$tag {$($attrs)*} [] $($rest)*}
+    };
+
+    (($tag:ident [$($children:tt)*]) $($rest:tt)*) => {
+        element_type! {$tag {} [$($children)*] $($rest)*}
+    };
+
+    (($tag:ident {$($attrs:tt)*} [$($children:tt)*]) $($rest:tt)*) => {
+        element_type! {$tag {$($attrs)*} [$($children)*] $($rest)*}
+    };
+
+    (($tag:ident) $($rest:tt)*) => {
+        element_type! {$tag {} [] $($rest)*}
+    };
+
+    ($tag:ident) => {
+        ElementNode<EmptyStyles, EmptyElements, EmptyElements>
+    };
+
+    ($tag:ident {$($attrs:tt)*} [$($children:tt)*] $($rest:tt)*) => {
+        ElementNode<attribute_type!{$($attrs)*}, element_type! {$($children)*}, element_type! {$($rest)*}>
+    };
+}
+
+#[macro_export]
+macro_rules! component {
+    ($name: ident, |props| {$($rest:tt)*}) => {
+        type ElementType = element_type! {$($rest)*};
+        pub struct $name {
+            element: ElementType
+        }
+
+        impl $name {
+            fn new() -> $name {
+                $name {
+                    element: element! {$($rest)*}
+                }
+            }
+
+            fn render(&self) -> ElementType {
+                element! {$($rest)*}
+            }
+        }
+    };
+}
+
+component! {TestApp,
+    |props| {
+        (div {style: {width: 500, height: 500, backgroundColor: 0xFF0000}} [
+            (div {style: {width: 10, height: 10, backgroundColor: 0x0000FF}})
+            (div)
+            (div {style: {width: 100, height: 100, backgroundColor: 0x000000}} [
+                (div {style: {width: 50, height: 50, backgroundColor: 0x00FF00}})
+            ])
+        ])
+    }
+}
+
+use std::ptr;
 #[no_mangle]
-pub fn run_demo(diff: bool) {
+pub fn run_demo(prev: *mut TestApp) -> *mut TestApp {
     let mount_start = unsafe{now()};
     let body = unsafe {get_document_body()};
-    let mut element =  element! {
-        (div {style: {width: "500px", height: "500px", backgroundColor: "yellow"}} [
-            (div {style: {width: "10px", height: "10px", backgroundColor: "blue"}})
-            (div)
-            (div {style: {width: "100px", height: "100px", backgroundColor: "black"}} [
-                (div {style: {width: "50px", height: "50px", backgroundColor: "green"}})
-            ])
-        ])
+
+    let mut app = if !prev.is_null() {
+        let mut prev_app = unsafe{Box::from_raw(prev)};
+        let mut element = (*prev_app).render();
+        element.diff_apply(&(*prev_app).element, body);
+        prev_app.element = element;
+        prev_app
+    } else {
+        let mut app = Box::new(TestApp::new());
+        {
+            let mut element = &mut(*app).element;
+            element.diff_apply(&EmptyElements, body);
+        }
+        app
     };
-    element.diff_apply(&EmptyElements, body);
     let mount_end = unsafe{now()};
 
-    if !diff {
-        println!("Mount Elapsed: {}", (mount_end - mount_start));
-        return;
-    }
+    println!("Elapsed: {}", (mount_end - mount_start));
 
-    let diff_start = unsafe{now()};
-    let prev_element = element;
-    let mut element =  element! {
-        (div {style: {width: "500px", height: "500px", backgroundColor: "yellow"}} [
-            (div {style: {width: "10px", height: "10px", backgroundColor: "blue"}})
-            (div)
-            (div {style: {width: "100px", height: "100px", backgroundColor: "black"}} [
-                (div {style: {width: "50px", height: "50px", backgroundColor: "green"}})
-            ])
-        ])
-    };
-    element.diff_apply(&prev_element, body);
-    let diff_end = unsafe{now()};
-    println!("Mount Elapsed: {}", (mount_end - mount_start));
-    println!("Diff Elapsed: {}", (diff_end - diff_start));
+    Box::into_raw(app)
 }
 
 #[cfg(test)]

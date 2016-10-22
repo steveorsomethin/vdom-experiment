@@ -1,2 +1,2 @@
 cargo build --release --target asmjs-unknown-emscripten;
-emcc -O3 -g2 -s EXPORTED_FUNCTIONS="['_run_demo']" --js-library ./js/lib.js target/asmjs-unknown-emscripten/release/libvdom_compare.a -o target/asmjs-unknown-emscripten/release/libvdom_compare.js;
+emcc -O3 -s EXPORTED_FUNCTIONS="['_run_demo']" --js-library ./js/lib.js target/asmjs-unknown-emscripten/release/libvdom_compare.a -o target/asmjs-unknown-emscripten/release/libvdom_compare.js;

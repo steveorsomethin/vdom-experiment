@@ -694,6 +694,32 @@ var externs = {
 
         return OK;
     },
+    set_element_style_i32: function setElementStyleInt(elementId, styleType, styleValue) {
+        //false && console.warn('setElementStyleFloat');
+        var key = styleTypes[styleType];
+        var actualValue;
+
+        switch(key) {
+            case 'width':
+            case 'height':
+                actualValue = styleValue + 'px';
+                break;
+            case 'backgroundColor':
+                actualValue = '#' + ('00000' + (styleValue | 0).toString(16)).substr(-6);
+                break;
+        }
+
+        var element = elementHandles[elementId];
+        var setter = styleSetters[styleType];
+
+        if (setter === undefined) {
+            return INVALID_ID;
+        }
+
+        setter(element.style, actualValue);
+
+        return OK;
+    },
     add_event_listener: function addEventListener(elementId, eventType, functionPointer, contextPointer) {
         var element = elementHandles[elementId];
         var setter = eventSetters[eventType];
