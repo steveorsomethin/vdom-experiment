@@ -1,3 +1,8 @@
+// Composition. Challenging to maintain static dispatch
+// Events/State. Channels with many tx downtree into one rx at top of tree. Should facilitate arbitrary state abstractions, fits well with rust ownership.
+// Dynamic children. Heap allocation necessary, dynamic dispatch on heterogenous children. Virtualization over bounded, static children might help here, but inadquate for large/recursive trees
+// Keys? Reconciling now is effecitvely a zip operation. Won't perform well unless list is stable. Lists are usually stable, using the approach I came up with at Netflix.
+
 #![feature(conservative_impl_trait)]
 #![feature(core_intrinsics)]
 
@@ -621,44 +626,13 @@ pub fn callback_junk() {
     // }
 }
 
-// const STRING_SIZE: usize = 32; 
-// #[derive(Debug, PartialEq, Eq)]
-// pub enum SizedString {
-//     Stack(usize, [u8; STRING_SIZE]),
-//     Heap(String)
-// }
-
-// impl SizedString {
-//     fn new(value: &str) -> SizedString {
-//         SizedString::Stack(0, [0u8; STRING_SIZE])
-//         // if value.len() > STRING_SIZE {
-//         //     SizedString::Heap(String::from(value))
-//         // } else  {
-//         //     SizedString::Stack(value.len(), {
-//         //         let mut array = [0u8; STRING_SIZE];
-//         //         for (c, p) in value.chars().zip(array.iter_mut()) {
-//         //             *p = c as u8;
-//         //         }
-//         //         array
-//         //     })
-//         // }
-//     }
-
-//     fn as_ffi(&self) -> (usize, *const c_char) {
-//         match *self {
-//             SizedString::Stack(ref len, ref buffer) => (*len, buffer.as_ptr()),
-//             SizedString::Heap(ref string) => (string.len(), CString::new(string.as_str()).unwrap().as_ptr()),
-//         }
-//     }
-// }
-
 pub trait Styles where Self::R: Styles {
     type R;
     fn apply<'a>(&'a self, element_id: i32);
     fn reset<'a>(&'a self, element_id: i32);
-    fn diff_apply<'a, P>(&'a mut self, prev_styles: &P, element_id: i32) where P: Styles;
+    fn diff_apply<'a, P>(&'a self, prev_styles: &P, element_id: i32) where P: Styles;
     fn apply_sibling<'a, F: FnOnce(&Self::R)>(&self, f: F);
-    fn compare(&self, name: CSSStyle, value: i32) -> bool;
+    fn compare(&self, name: CSSStyle, value: &StyleValue) -> bool;
 }
 
 #[derive(Debug)]
@@ -676,7 +650,7 @@ impl Styles for EmptyStyles {
     }
 
     #[inline]
-    fn diff_apply<'a, P>(&'a mut self, prev_styles: &P, element_id: i32) where P: Styles {
+    fn diff_apply<'a, P>(&'a self, prev_styles: &P, element_id: i32) where P: Styles {
         prev_styles.reset(element_id);
     }
 
@@ -686,26 +660,65 @@ impl Styles for EmptyStyles {
     }
 
     #[inline]
-    fn compare(&self, name: CSSStyle, value: i32) -> bool {
+    fn compare(&self, name: CSSStyle, value: &StyleValue) -> bool {
         false
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum StyleValue {
+    Static(&'static str),
+    Heap(String)
+}
+
+pub trait AsStyleValue {
+    #[inline]
+    fn as_style_value(self) -> StyleValue;
+}
+
+impl AsStyleValue for &'static str {
+    #[inline]
+    fn as_style_value(self) -> StyleValue {
+        StyleValue::Static(self)
+    }
+}
+
+impl AsStyleValue for String {
+    #[inline]
+    fn as_style_value(self) -> StyleValue {
+        StyleValue::Heap(self)
+    }
+}
+
+impl StyleValue {
+    // TODO: Errors
+    fn apply(&self, element_id: i32, style: CSSStyle) {
+        let string = match *self {
+            StyleValue::Static(string) => string,
+            StyleValue::Heap(ref string) => string.as_str(),
+        };
+
+        unsafe {
+            set_element_style_str(element_id, style, CString::new(string).unwrap().as_ptr(), string.len() as i32);
+        }
     }
 }
 
 #[derive(Debug)]
 pub struct StyleNode<R> where R: Styles {
     name: CSSStyle,
-    value: i32,
+    value: StyleValue,
     sibling: R
 }
 
 impl StyleNode<EmptyStyles> {
     #[inline]
-    pub fn new(name: CSSStyle, value: i32)
-               -> StyleNode<EmptyStyles>
+    pub fn new<V>(name: CSSStyle, value: V) -> StyleNode<EmptyStyles>
+        where V: AsStyleValue
     {
         StyleNode {
             name: name,
-            value: value,
+            value: value.as_style_value(),
             sibling: EmptyStyles
         }
     }
@@ -713,12 +726,12 @@ impl StyleNode<EmptyStyles> {
 
 impl<'n, R> StyleNode<R> where R: Styles {
     #[inline]
-    pub fn add_sibling(self, name: CSSStyle, value: i32)
-                  -> StyleNode<StyleNode<R>>
+    pub fn add_sibling<V>(self, name: CSSStyle, value: V) -> StyleNode<StyleNode<R>>
+        where V: AsStyleValue
     {
         StyleNode {
             name: name,
-            value: value,
+            value: value.as_style_value(),
             sibling: self
         }
     }
@@ -729,9 +742,7 @@ impl<'n, R> Styles for StyleNode<R> where R: Styles {
     #[inline]
     fn apply<'a>(&'a self, element_id: i32) {
         self.sibling.apply(element_id);
-        unsafe {
-            set_element_style_i32(element_id, self.name, self.value);
-        }
+        self.value.apply(element_id, self.name);
     }
 
     #[inline]
@@ -742,13 +753,11 @@ impl<'n, R> Styles for StyleNode<R> where R: Styles {
     }
 
     #[inline]
-    fn diff_apply<'a, P>(&'a mut self, prev_styles: &P, element_id: i32) where P: Styles {
+    fn diff_apply<'a, P>(&'a self, prev_styles: &P, element_id: i32) where P: Styles {
         prev_styles.apply_sibling(|sibling| self.sibling.diff_apply(sibling, element_id));
 
-        if !prev_styles.compare(self.name, self.value) {
-            unsafe {
-                set_element_style_i32(element_id, self.name, self.value);
-            }
+        if !prev_styles.compare(self.name, &self.value) {
+            self.value.apply(element_id, self.name);
         }
     }
 
@@ -758,8 +767,8 @@ impl<'n, R> Styles for StyleNode<R> where R: Styles {
     }
 
     #[inline]
-    fn compare(&self, name: CSSStyle, value: i32) -> bool {
-        self.name == name && self.value == value
+    fn compare(&self, name: CSSStyle, value: &StyleValue) -> bool {
+        self.name == name && self.value == *value
     }
 }
 
@@ -785,251 +794,251 @@ macro_rules! style {
 }
 
 // Children
-pub trait Elements where Self::U: Styles, Self::C: Elements, Self::R: Elements {
-    type U;
-    type C;
-    type R;
-    fn apply<'a>(&'a mut self, parent_id: i32);
-    fn diff_apply<'a, P>(&'a mut self, prev_element: &P, parent_id: i32) where P: Elements, P::C: Elements;
-    fn unmount(&self);
-    fn apply_children<'a, F: FnOnce(&Self::C)>(&self, f: F);
-    fn apply_sibling<'a, F: FnOnce(&Self::R)>(&self, f: F);
-    fn apply_styles<'a, F: FnOnce(&Self::U)>(&self, f: F);
-    fn tag(&self) -> HTMLTag;
-    fn element_id(&self) -> i32;
-}
+// pub trait Elements where Self::U: Styles, Self::C: Elements, Self::R: Elements {
+//     type U;
+//     type C;
+//     type R;
+//     fn apply<'a>(&'a mut self, parent_id: i32);
+//     fn diff_apply<'a, P>(&'a mut self, prev_element: &P, parent_id: i32) where P: Elements, P::C: Elements;
+//     fn unmount(&self);
+//     fn apply_children<'a, F: FnOnce(&Self::C)>(&self, f: F);
+//     fn apply_sibling<'a, F: FnOnce(&Self::R)>(&self, f: F);
+//     fn apply_styles<'a, F: FnOnce(&Self::U)>(&self, f: F);
+//     fn tag(&self) -> HTMLTag;
+//     fn element_id(&self) -> i32;
+// }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct EmptyElements;
-impl EmptyElements {
-    #[inline]
-    pub fn add_sibling<G, U>(self, args: (HTMLTag, G, U))
-                  -> ElementNode<U, G, EmptyElements>
-                  where G: Elements, U: Styles
-    {
-        let (tag, children, styles) = args;
-        ElementNode {
-            tag: tag,
-            element_id: -1,
-            styles: styles,
-            children: children,
-            sibling: self
-        }
-    }
-}
+// #[derive(Debug, PartialEq, Eq)]
+// pub struct EmptyElements;
+// impl EmptyElements {
+//     #[inline]
+//     pub fn add_sibling<G, U>(self, args: (HTMLTag, G, U))
+//                   -> ElementNode<U, G, EmptyElements>
+//                   where G: Elements, U: Styles
+//     {
+//         let (tag, children, styles) = args;
+//         ElementNode {
+//             tag: tag,
+//             element_id: -1,
+//             styles: styles,
+//             children: children,
+//             sibling: self
+//         }
+//     }
+// }
 
-impl Elements for EmptyElements {
-    type U = EmptyStyles;
-    type C = EmptyElements;
-    type R = EmptyElements;
+// impl Elements for EmptyElements {
+//     type U = EmptyStyles;
+//     type C = EmptyElements;
+//     type R = EmptyElements;
 
-    #[inline]
-    fn apply<'a>(&'a mut self, _: i32) {
+//     #[inline]
+//     fn apply<'a>(&'a mut self, _: i32) {
 
-    }
+//     }
 
-    #[inline]
-    fn unmount(&self) {
+//     #[inline]
+//     fn unmount(&self) {
 
-    }
+//     }
 
-    #[inline]
-    fn diff_apply<'a, P>(&'a mut self, prev_element: &P, parent_id: i32) where P: Elements, P::C: Elements {
-        let element_id = prev_element.element_id();
-        if prev_element.tag() != self.tag() {
-            unsafe {
-                destroy_element(element_id);
-            }
-        }
-    }
+//     #[inline]
+//     fn diff_apply<'a, P>(&'a mut self, prev_element: &P, parent_id: i32) where P: Elements, P::C: Elements {
+//         let element_id = prev_element.element_id();
+//         if prev_element.tag() != self.tag() {
+//             unsafe {
+//                 destroy_element(element_id);
+//             }
+//         }
+//     }
 
-    #[inline]
-    fn apply_children<'a, F: FnOnce(&Self::C)>(&self, f: F) {
-        f(&EmptyElements);
-    }
+//     #[inline]
+//     fn apply_children<'a, F: FnOnce(&Self::C)>(&self, f: F) {
+//         f(&EmptyElements);
+//     }
 
-    #[inline]
-    fn apply_sibling<'a, F: FnOnce(&Self::R)>(&self, f: F) {
-        f(&EmptyElements);
-    }
+//     #[inline]
+//     fn apply_sibling<'a, F: FnOnce(&Self::R)>(&self, f: F) {
+//         f(&EmptyElements);
+//     }
 
-    #[inline]
-    fn apply_styles<'a, F: FnOnce(&Self::U)>(&self, f: F) {
-        f(&EmptyStyles);
-    }
+//     #[inline]
+//     fn apply_styles<'a, F: FnOnce(&Self::U)>(&self, f: F) {
+//         f(&EmptyStyles);
+//     }
 
-    #[inline]
-    fn tag(&self) -> HTMLTag {
-        HTMLTag::EMPTY
-    }
+//     #[inline]
+//     fn tag(&self) -> HTMLTag {
+//         HTMLTag::EMPTY
+//     }
 
-    #[inline]
-    fn element_id(&self) -> i32 {
-        -1
-    }
-}
+//     #[inline]
+//     fn element_id(&self) -> i32 {
+//         -1
+//     }
+// }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct ElementNode<S, C, R> where S: Styles, C: Elements, R: Elements {
-    tag: HTMLTag,
-    element_id: i32,
-    styles: S,
-    children: C,
-    sibling: R
-}
+// #[derive(Debug, PartialEq, Eq)]
+// pub struct ElementNode<S, C, R> where S: Styles, C: Elements, R: Elements {
+//     tag: HTMLTag,
+//     element_id: i32,
+//     styles: S,
+//     children: C,
+//     sibling: R
+// }
 
-impl<S, C> ElementNode<S, C, EmptyElements> where S: Styles, C: Elements {
-    #[inline]
-    pub fn new(tag: HTMLTag, children: C, styles: S)
-               -> ElementNode<S, C, EmptyElements>
-    {
-        ElementNode {
-            tag: tag,
-            element_id: -1,
-            styles: styles,
-            children: children,
-            sibling: EmptyElements
-        }
-    }
-}
+// impl<S, C> ElementNode<S, C, EmptyElements> where S: Styles, C: Elements {
+//     #[inline]
+//     pub fn new(tag: HTMLTag, children: C, styles: S)
+//                -> ElementNode<S, C, EmptyElements>
+//     {
+//         ElementNode {
+//             tag: tag,
+//             element_id: -1,
+//             styles: styles,
+//             children: children,
+//             sibling: EmptyElements
+//         }
+//     }
+// }
 
-impl<S, C, R> ElementNode<S, C, R> where S: Styles, C: Elements, R: Elements {
-    #[inline]
-    pub fn add_sibling<G, U>(self, args: (HTMLTag, G, U))
-                  -> ElementNode<U, G, ElementNode<S, C, R>>
-                  where G: Elements, U: Styles
-    {
-        let (tag, children, styles) = args;
-        ElementNode {
-            tag: tag,
-            element_id: -1,
-            styles: styles,
-            children: children,
-            sibling: self
-        }
-    }
-}
+// impl<S, C, R> ElementNode<S, C, R> where S: Styles, C: Elements, R: Elements {
+//     #[inline]
+//     pub fn add_sibling<G, U>(self, args: (HTMLTag, G, U))
+//                   -> ElementNode<U, G, ElementNode<S, C, R>>
+//                   where G: Elements, U: Styles
+//     {
+//         let (tag, children, styles) = args;
+//         ElementNode {
+//             tag: tag,
+//             element_id: -1,
+//             styles: styles,
+//             children: children,
+//             sibling: self
+//         }
+//     }
+// }
 
-impl<S, C, R> Elements for ElementNode<S, C, R> where S: Styles, C: Elements, R: Elements {
-    type U = S;
-    type C = C;
-    type R = R;
+// impl<S, C, R> Elements for ElementNode<S, C, R> where S: Styles, C: Elements, R: Elements {
+//     type U = S;
+//     type C = C;
+//     type R = R;
 
-    #[inline]
-    fn apply<'a>(&'a mut self, parent_id: i32) {
-        let element_id = unsafe {
-            let element_id = create_element(self.tag);
-            set_element_parent(element_id, parent_id);
-            self.styles.apply(element_id);
-            element_id
-        };
+//     #[inline]
+//     fn apply<'a>(&'a mut self, parent_id: i32) {
+//         let element_id = unsafe {
+//             let element_id = create_element(self.tag);
+//             set_element_parent(element_id, parent_id);
+//             self.styles.apply(element_id);
+//             element_id
+//         };
 
-        self.children.apply(element_id);
-        self.sibling.apply(parent_id);
-        self.element_id = element_id;
-    }
+//         self.children.apply(element_id);
+//         self.sibling.apply(parent_id);
+//         self.element_id = element_id;
+//     }
 
-    #[inline]
-    fn diff_apply<'a, P>(&'a mut self, prev_element: &P, parent_id: i32) where P: Elements {
-        let element_id = prev_element.element_id();
-        if prev_element.tag() == self.tag() {
-            self.element_id = element_id;
-            prev_element.apply_styles(|prev_styles| {
-                self.styles.diff_apply(prev_styles, element_id);
-            });
+//     #[inline]
+//     fn diff_apply<'a, P>(&'a mut self, prev_element: &P, parent_id: i32) where P: Elements {
+//         let element_id = prev_element.element_id();
+//         if prev_element.tag() == self.tag() {
+//             self.element_id = element_id;
+//             prev_element.apply_styles(|prev_styles| {
+//                 self.styles.diff_apply(prev_styles, element_id);
+//             });
 
-            prev_element.apply_children(|prev_children| {
-                self.children.diff_apply(prev_children, element_id);
-            });
+//             prev_element.apply_children(|prev_children| {
+//                 self.children.diff_apply(prev_children, element_id);
+//             });
             
-            prev_element.apply_sibling(|prev_sibling| {
-                self.sibling.diff_apply(prev_sibling, parent_id);
-            });
-        } else {
-            prev_element.unmount();
-            self.apply(parent_id);
-        }
-    }
+//             prev_element.apply_sibling(|prev_sibling| {
+//                 self.sibling.diff_apply(prev_sibling, parent_id);
+//             });
+//         } else {
+//             prev_element.unmount();
+//             self.apply(parent_id);
+//         }
+//     }
 
-    #[inline]
-    fn unmount(&self) {
-        unsafe {
-            destroy_element(self.element_id);
-        }
-    }
+//     #[inline]
+//     fn unmount(&self) {
+//         unsafe {
+//             destroy_element(self.element_id);
+//         }
+//     }
 
-    #[inline]
-    fn apply_children<'a, F: FnOnce(&Self::C)>(&self, f: F) {
-        f(&self.children);
-    }
+//     #[inline]
+//     fn apply_children<'a, F: FnOnce(&Self::C)>(&self, f: F) {
+//         f(&self.children);
+//     }
 
-    #[inline]
-    fn apply_sibling<'a, F: FnOnce(&Self::R)>(&self, f: F) {
-        f(&self.sibling);
-    }
+//     #[inline]
+//     fn apply_sibling<'a, F: FnOnce(&Self::R)>(&self, f: F) {
+//         f(&self.sibling);
+//     }
 
-    #[inline]
-    fn apply_styles<'a, F: FnOnce(&Self::U)>(&self, f: F) {
-        f(&self.styles);
-    }
+//     #[inline]
+//     fn apply_styles<'a, F: FnOnce(&Self::U)>(&self, f: F) {
+//         f(&self.styles);
+//     }
 
-    #[inline]
-    fn tag(&self) -> HTMLTag {
-        self.tag
-    }
+//     #[inline]
+//     fn tag(&self) -> HTMLTag {
+//         self.tag
+//     }
 
-    #[inline]
-    fn element_id(&self) -> i32 {
-        self.element_id
-    }
-}
+//     #[inline]
+//     fn element_id(&self) -> i32 {
+//         self.element_id
+//     }
+// }
 
-use std::ops::{Deref, DerefMut};
-impl<I, D> Elements for D where D: DerefMut<Target=I>, D: Deref<Target=I>, I: Elements {
-    type U = I::U;
-    type C = I::C;
-    type R = I::R;
+// use std::ops::{Deref, DerefMut};
+// impl<I, D> Elements for D where D: DerefMut<Target=I>, D: Deref<Target=I>, I: Elements {
+//     type U = I::U;
+//     type C = I::C;
+//     type R = I::R;
 
-    #[inline]
-    fn apply<'a>(&'a mut self, element_id: i32) {
-        (**self).apply(element_id);
-    }
+//     #[inline]
+//     fn apply<'a>(&'a mut self, element_id: i32) {
+//         (**self).apply(element_id);
+//     }
 
-    #[inline]
-    fn unmount(&self) {
-        (**self).unmount();
-    }
+//     #[inline]
+//     fn unmount(&self) {
+//         (**self).unmount();
+//     }
 
-    #[inline]
-    fn diff_apply<'a, P>(&'a mut self, prev_element: &P, parent_id: i32) where P: Elements, P::C: Elements {
-        (**self).diff_apply(prev_element, parent_id);
-    }
+//     #[inline]
+//     fn diff_apply<'a, P>(&'a mut self, prev_element: &P, parent_id: i32) where P: Elements, P::C: Elements {
+//         (**self).diff_apply(prev_element, parent_id);
+//     }
 
-    #[inline]
-    fn apply_children<'a, F: FnOnce(&Self::C)>(&self, f: F) {
-        (**self).apply_children(f);
-    }
+//     #[inline]
+//     fn apply_children<'a, F: FnOnce(&Self::C)>(&self, f: F) {
+//         (**self).apply_children(f);
+//     }
 
-    #[inline]
-    fn apply_sibling<'a, F: FnOnce(&Self::R)>(&self, f: F) {
-        (**self).apply_sibling(f);
-    }
+//     #[inline]
+//     fn apply_sibling<'a, F: FnOnce(&Self::R)>(&self, f: F) {
+//         (**self).apply_sibling(f);
+//     }
 
-    #[inline]
-    fn apply_styles<'a, F: FnOnce(&Self::U)>(&self, f: F) {
-        (**self).apply_styles(f);
-    }
+//     #[inline]
+//     fn apply_styles<'a, F: FnOnce(&Self::U)>(&self, f: F) {
+//         (**self).apply_styles(f);
+//     }
 
-    #[inline]
-    fn tag(&self) -> HTMLTag {
-        (**self).tag()
-    }
+//     #[inline]
+//     fn tag(&self) -> HTMLTag {
+//         (**self).tag()
+//     }
 
-    #[inline]
-    fn element_id(&self) -> i32 {
-        (**self).element_id()
-    }
-}
+//     #[inline]
+//     fn element_id(&self) -> i32 {
+//         (**self).element_id()
+//     }
+// }
 // Children
 
 #[macro_export]
@@ -1045,7 +1054,7 @@ macro_rules! attributes {
 
 #[macro_export]
 macro_rules! element {
-    () => {EmptyElements};
+    () => {EmptyDescriptor};
 
     // Reverses child list, so that traversal still happens top down rather than bottom up
     (($head:tt) $($tail:tt)*) => {
@@ -1073,14 +1082,18 @@ macro_rules! element {
     };
 
     ($tag:ident) => {
-        (HTMLTag::$tag, EmptyElements, EmptyStyles)
+        (EmptyStyles, EmptyDescriptor)
     };
 
     ($tag:ident {$($attrs:tt)*} [$($children:tt)*] $($rest:tt)*) => {
         {
             let children = element! {$($children)*};
             let element = element! {$($rest)*};
-            let element = element.add_sibling((HTMLTag::$tag, children, attributes! {$($attrs)*}));
+            let element = element.add_sibling::<
+                $tag<attribute_type!{$($attrs)*}, element_type! {$($children)*}, element_type! {$($rest)*}>,
+                attribute_type!{$($attrs)*},
+                element_type! {$($children)*}>
+                ((attributes! {$($attrs)*}, children));
             element
         }
     };
@@ -1118,7 +1131,7 @@ macro_rules! style_type {
 
 macro_rules! element_type {
     () => {
-        EmptyElements
+        EmptyDescriptor
     };
 
     (($tag:ident {$($attrs:tt)*}) $($rest:tt)*) => {
@@ -1138,11 +1151,41 @@ macro_rules! element_type {
     };
 
     ($tag:ident) => {
-        ElementNode<EmptyStyles, EmptyElements, EmptyElements>
+        ComponentDescriptor<$tag<EmptyStyles, EmptyDescriptor, EmptyDescriptor>, EmptyStyles, EmptyDescriptor, EmptyDescriptor>
     };
 
     ($tag:ident {$($attrs:tt)*} [$($children:tt)*] $($rest:tt)*) => {
-        ElementNode<attribute_type!{$($attrs)*}, element_type! {$($children)*}, element_type! {$($rest)*}>
+        ComponentDescriptor<$tag<attribute_type!{$($attrs)*}, element_type! {$($children)*}, element_type! {$($rest)*}>, attribute_type!{$($attrs)*}, element_type! {$($children)*}, element_type! {$($rest)*}>
+    };
+}
+
+macro_rules! component_type {
+    () => {
+        EmptyComponent
+    };
+
+    (($tag:ident {$($attrs:tt)*}) $($rest:tt)*) => {
+        component_type! {$tag {$($attrs)*} [] $($rest)*}
+    };
+
+    (($tag:ident [$($children:tt)*]) $($rest:tt)*) => {
+        component_type! {$tag {} [$($children)*] $($rest)*}
+    };
+
+    (($tag:ident {$($attrs:tt)*} [$($children:tt)*]) $($rest:tt)*) => {
+        component_type! {$tag {$($attrs)*} [$($children)*] $($rest)*}
+    };
+
+    (($tag:ident) $($rest:tt)*) => {
+        component_type! {$tag {} [] $($rest)*}
+    };
+
+    ($tag:ident) => {
+        <$tag<EmptyStyles, EmptyDescriptor, EmptyDescriptor> as ComponentConstructor>::Component
+    };
+
+    ($tag:ident {$($attrs:tt)*} [$($children:tt)*] $($rest:tt)*) => {
+        <$tag<attribute_type!{$($attrs)*}, element_type! {$($children)*}, element_type! {$($rest)*}> as ComponentConstructor>::Component
     };
 }
 
@@ -1150,19 +1193,29 @@ macro_rules! element_type {
 macro_rules! component {
     ($name: ident, |props| {$($rest:tt)*}) => {
         type ElementType = element_type! {$($rest)*};
+        type ComponentType = component_type! {$($rest)*};
         pub struct $name {
-            element: ElementType
+            element: ElementType,
+            component: ComponentType,
+            parent_id: i32
         }
 
         impl $name {
-            fn new() -> $name {
+            fn new(parent_id: i32) -> $name {
+                let descriptor = element! {$($rest)*};
+                let mut component = descriptor.construct_component();
+                component.mount(parent_id, &descriptor);
                 $name {
-                    element: element! {$($rest)*}
+                    element: descriptor,
+                    component: component,
+                    parent_id: parent_id
                 }
             }
 
-            fn render(&self) -> ElementType {
-                element! {$($rest)*}
+            fn update(&mut self) {
+                let next_descriptor = element! {$($rest)*};
+                self.component.update(self.parent_id, &self.element, &next_descriptor);
+                self.element = next_descriptor;
             }
         }
     };
@@ -1170,40 +1223,324 @@ macro_rules! component {
 
 component! {TestApp,
     |props| {
-        (div {style: {width: 500, height: 500, backgroundColor: 0xFF0000}} [
-            (div {style: {width: 10, height: 10, backgroundColor: 0x0000FF}})
+        (div {style: {width: "500px", height: "500px", backgroundColor: "#FF0000"}} [
+            (div {style: {width: "10px", height: "10px", backgroundColor: "#0000FF"}})
             (div)
-            (div {style: {width: 100, height: 100, backgroundColor: 0x000000}} [
-                (div {style: {width: 50, height: 50, backgroundColor: 0x00FF00}})
+            (div {style: {width: "100px", height: "100px", backgroundColor: "#000000"}} [
+                (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
+                
+                // (Expression {model: model, index: 0, color: COLOR1})
+                // (div)
+                // {
+                //     model.expressions.iter().enumerate().map(|(expression, index)| element!{
+                //         (Expression {model: expression, index: index})
+                //     })
+                // }
             ])
         ])
     }
 }
 
+// type ExpressionDescriptor = ComponentDescriptor<Expression, ExpressionArguments, EmptyDescriptor, ComponentDescriptor<div, EmptyArguments, EmptyDescriptor, EmptyDescriptor>>
+// ExpressionComponent<ExpressionDescriptor, EmptyComponent, div<EmptyComponent>, EmptyComponent>::Component>
+
+// DOMComponent<ComponentDescriptor<div<Arguments, ChildDescriptor, SiblingDescriptor>, Arguments, ChildDescriptor, SiblingDescriptor>, <<ChildDescriptor as Descriptor>::Constructor as ComponentConstructor>::Component, <<SiblingDescriptor as Descriptor>::Constructor as ComponentConstructor>::Component>
+// DOMComponent<_, &<<ChildDescriptor as Descriptor>::Constructor as ComponentConstructor>::Component, &<<SiblingDescriptor as Descriptor>::Constructor as ComponentConstructor>::Component>
+
+// Component
+use std::marker::PhantomData;
+trait Component {
+    type Descriptor;
+    fn mount(&mut self, parent_id: i32, descriptor: &Self::Descriptor);
+    fn update(&mut self, parent_id: i32, prev_descriptor: &Self::Descriptor, descriptor: &Self::Descriptor);
+    fn unmount(&mut self);
+}
+
+struct EmptyComponent;
+impl Component for EmptyComponent {
+    type Descriptor = EmptyDescriptor;
+    fn mount(&mut self, parent_id: i32, descriptor: &Self::Descriptor) {}
+    fn update(&mut self, parent_id: i32, prev_descriptor: &Self::Descriptor, descriptor: &Self::Descriptor) {}
+    fn unmount(&mut self) {}
+}
+// Component
+
+// Constructor
+trait ComponentConstructor {
+    type Component;
+    type Descriptor;
+    fn construct_component(descriptor: &Self::Descriptor) -> Self::Component;
+}
+
+impl ComponentConstructor for () {
+    type Component = EmptyComponent;
+    type Descriptor = EmptyDescriptor;
+    fn construct_component(descriptor: &Self::Descriptor) -> Self::Component {
+        EmptyComponent
+    }
+}
+// Constructor
+
+// Descriptor
+trait Descriptor {
+    type Constructor: ComponentConstructor;
+    type Arguments;
+    type ChildDescriptor: Descriptor;
+    type SiblingDescriptor: Descriptor;
+    fn construct_component(&self) -> <<Self as Descriptor>::Constructor as ComponentConstructor>::Component;
+    fn visit<VisitorFunc>(&self, func: VisitorFunc) where VisitorFunc: FnOnce(&Self::Arguments, &Self::ChildDescriptor, &Self::SiblingDescriptor);
+}
+
+struct ComponentDescriptor<Constructor, Arguments, ChildDescriptor, SiblingDescriptor> {
+    arguments: Arguments,
+    children: ChildDescriptor,
+    siblings: SiblingDescriptor,
+    constructor: PhantomData<Constructor>
+}
+
+impl<Constructor, Arguments, ChildDescriptor, SiblingDescriptor> ComponentDescriptor<Constructor, Arguments, ChildDescriptor, SiblingDescriptor> {
+    #[inline]
+    pub fn add_sibling<SiblingConstructor, SiblingArguments, SiblingChildDescriptor>(self, args: (SiblingArguments, SiblingChildDescriptor))
+        -> ComponentDescriptor<SiblingConstructor, SiblingArguments, SiblingChildDescriptor, Self>
+        where SiblingConstructor: ComponentConstructor,
+              SiblingArguments: Styles,
+              SiblingChildDescriptor: Descriptor
+    {
+        let (arguments, children) = args;
+        ComponentDescriptor {
+            arguments: arguments,
+            children: children,
+            siblings: self,
+            constructor: PhantomData
+        }
+    }
+}
+
+struct EmptyDescriptor;
+impl EmptyDescriptor {
+    #[inline]
+    pub fn add_sibling<SiblingConstructor, SiblingArguments, SiblingChildDescriptor>(self, args: (SiblingArguments, SiblingChildDescriptor))
+        -> ComponentDescriptor<SiblingConstructor, SiblingArguments, SiblingChildDescriptor, Self>
+        where SiblingConstructor: ComponentConstructor,
+              SiblingArguments: Styles,
+              SiblingChildDescriptor: Descriptor
+    {
+        let (arguments, children) = args;
+        ComponentDescriptor {
+            arguments: arguments,
+            children: children,
+            siblings: self,
+            constructor: PhantomData
+        }
+    }
+}
+
+impl Descriptor for EmptyDescriptor {
+    type Constructor = ();
+    type Arguments = ();
+    type ChildDescriptor = EmptyDescriptor;
+    type SiblingDescriptor = EmptyDescriptor;
+    fn construct_component(&self) -> <<Self as Descriptor>::Constructor as ComponentConstructor>::Component {
+        EmptyComponent
+    }
+
+    fn visit<VisitorFunc>(&self, func: VisitorFunc) where VisitorFunc: FnOnce(&Self::Arguments, &Self::ChildDescriptor, &Self::SiblingDescriptor) {
+
+    }
+}
+
+impl<Constructor, Arguments, ChildDescriptor, SiblingDescriptor> Descriptor for ComponentDescriptor<Constructor, Arguments, ChildDescriptor, SiblingDescriptor>
+    where Constructor: ComponentConstructor<Descriptor=ComponentDescriptor<Constructor, Arguments, ChildDescriptor, SiblingDescriptor>>,
+          ChildDescriptor: Descriptor,
+          SiblingDescriptor: Descriptor {
+    type Constructor = Constructor;
+    type Arguments = Arguments;
+    type ChildDescriptor = ChildDescriptor;
+    type SiblingDescriptor = SiblingDescriptor;
+
+    fn construct_component(&self) -> <<Self as Descriptor>::Constructor as ComponentConstructor>::Component {
+        Constructor::construct_component(self)
+    }
+
+    fn visit<VisitorFunc>(&self, func: VisitorFunc) where VisitorFunc: FnOnce(&Self::Arguments, &Self::ChildDescriptor, &Self::SiblingDescriptor) {
+        func(&self.arguments, &self.children, &self.siblings);
+    }
+}
+// Descriptor
+
+// DOM
+trait DOMDescriptor: Descriptor {
+    fn tag() -> HTMLTag;
+}
+
+struct DOMComponent<Descriptor, ChildComponent, SiblingComponent> {
+    descriptor: PhantomData<Descriptor>,
+    dom_handle: i32,
+    children: ChildComponent,
+    siblings: SiblingComponent
+}
+
+struct div<Arguments, ChildDescriptor, SiblingDescriptor> {
+    arguments: PhantomData<Arguments>,
+    children: PhantomData<ChildDescriptor>,
+    siblings: PhantomData<SiblingDescriptor>
+}
+
+impl<Arguments, ChildDescriptor, SiblingDescriptor> ComponentConstructor for div<Arguments, ChildDescriptor, SiblingDescriptor> where ChildDescriptor: Descriptor, SiblingDescriptor: Descriptor {
+    type Descriptor = ComponentDescriptor<Self, Arguments, ChildDescriptor, SiblingDescriptor>;
+    type Component = DOMComponent<Self::Descriptor, <<ChildDescriptor as Descriptor>::Constructor as ComponentConstructor>::Component, <<SiblingDescriptor as Descriptor>::Constructor as ComponentConstructor>::Component>;
+
+    fn construct_component(descriptor: &Self::Descriptor) -> Self::Component {
+        DOMComponent {
+            descriptor: PhantomData,
+            dom_handle: -1,
+            children: descriptor.children.construct_component(),
+            siblings: descriptor.siblings.construct_component()
+        }
+    }
+}
+
+impl<Arguments, ChildDescriptor, SiblingDescriptor> DOMDescriptor for ComponentDescriptor<div<Arguments, ChildDescriptor, SiblingDescriptor>, Arguments, ChildDescriptor, SiblingDescriptor> 
+    where ChildDescriptor: Descriptor,
+          SiblingDescriptor: Descriptor {
+    fn tag() -> HTMLTag {
+        HTMLTag::div
+    }
+}
+
+impl<DescriptorT, ChildComponent, SiblingComponent> Component for DOMComponent<DescriptorT, ChildComponent, SiblingComponent>
+    where DescriptorT: DOMDescriptor<ChildDescriptor=ChildComponent::Descriptor, SiblingDescriptor=SiblingComponent::Descriptor>,
+          DescriptorT::ChildDescriptor: Descriptor,
+          DescriptorT::SiblingDescriptor: Descriptor,
+          DescriptorT::Arguments: Styles,
+          ChildComponent: Component,
+          SiblingComponent: Component {
+    type Descriptor = DescriptorT;
+
+    fn mount(&mut self, parent_id: i32, descriptor: &Self::Descriptor) {
+        self.dom_handle = unsafe {
+            let dom_handle = create_element(Self::Descriptor::tag());
+            set_element_parent(dom_handle, parent_id);
+            dom_handle
+        };
+
+        descriptor.visit(|arguments, children, siblings| {
+            arguments.apply(self.dom_handle);
+            self.children.mount(self.dom_handle, children);
+            self.siblings.mount(parent_id, siblings);
+        });
+    }
+
+    fn update(&mut self, parent_id: i32, prev_descriptor: &Self::Descriptor, descriptor: &Self::Descriptor) {
+        prev_descriptor.visit(|prev_arguments, prev_children, prev_siblings| {
+            descriptor.visit(|arguments, children, siblings| {
+                arguments.diff_apply(prev_arguments, self.dom_handle);
+                self.children.update(self.dom_handle, prev_children, children);
+                self.siblings.update(parent_id, prev_siblings, siblings);
+            });
+        });
+    }
+
+    fn unmount(&mut self) {
+        self.children.unmount();
+        self.siblings.unmount();
+    }
+}
+// DOM
+
+
+// struct ExpressionArguments {
+//     model: ExpressionModel,
+//     index: usze,
+//     color: i32
+// }
+// struct Expression;
+// struct ExpressionComponent {
+//     descriptor: ComponentDescriptor
+// }
+
+// impl Component for ExpressionComponent {
+//     type Descriptor = Expression;
+
+//     fn mount() {
+
+//     }
+
+//     fn update(&mut self, descriptor: Self::Descriptor) {
+
+//     }
+// }
+
+// impl Element for Expression {
+//     type Component = ExpressionComponent;
+
+//     fn create_component(descriptor: Self) -> Self::Component {
+//         ExpressionComponent {
+//             descriptor: descriptor
+//         }
+//     }
+// }
+
+// ComponentDescriptor<div, EmptyAttributes, EmptyElement, EmptyElement>
+// ComponentDescriptor<Expression, EmptyAttributes, EmptyElement, ComponentDescriptor<div, EmptyAttributes, EmptyElement, EmptyElement>>
+
+// pub struct ElementNode<S, C, R> where S: Styles, C: Elements, R: Elements {
+//     tag: HTMLTag,
+//     element_id: i32,
+//     styles: S,
+//     children: C,
+//     sibling: R
+// }
+
+// impl<S, C> ElementNode<S, C, EmptyElements> where S: Styles, C: Elements {
+//     #[inline]
+//     pub fn new(tag: HTMLTag, children: C, styles: S)
+//                -> ElementNode<S, C, EmptyElements>
+//     {
+//         ElementNode {
+//             tag: tag,
+//             element_id: -1,
+//             styles: styles,
+//             children: children,
+//             sibling: EmptyElements
+//         }
+//     }
+// }
+
+// impl<S, C, R> ElementNode<S, C, R> where S: Styles, C: Elements, R: Elements {
+//     #[inline]
+//     pub fn add_sibling<G, U>(self, args: (HTMLTag, G, U))
+//                   -> ElementNode<U, G, ElementNode<S, C, R>>
+//                   where G: Elements, U: Styles
+//     {
+//         let (tag, children, styles) = args;
+//         ElementNode {
+//             tag: tag,
+//             element_id: -1,
+//             styles: styles,
+//             children: children,
+//             sibling: self
+//         }
+//     }
+// }
+
 use std::ptr;
+use std::default::Default;
 #[no_mangle]
 pub fn run_demo(prev: *mut TestApp) -> *mut TestApp {
     let mount_start = unsafe{now()};
     let body = unsafe {get_document_body()};
 
     let mut app = if !prev.is_null() {
-        let mut prev_app = unsafe{Box::from_raw(prev)};
-        let mut element = (*prev_app).render();
-        element.diff_apply(&(*prev_app).element, body);
-        prev_app.element = element;
-        prev_app
+        unsafe{Box::from_raw(prev)}
     } else {
-        let mut app = Box::new(TestApp::new());
-        {
-            let mut element = &mut(*app).element;
-            element.diff_apply(&EmptyElements, body);
-        }
-        app
+        Box::new(TestApp::new(body))
     };
+    (*app).update();
     let mount_end = unsafe{now()};
 
     println!("Elapsed: {}", (mount_end - mount_start));
-
+    // let hmm = Woo::<<Blah<i32> as Butts>::Yay> {a: Ehh{b: 0}, ..Default::default()};
     Box::into_raw(app)
 }
 
