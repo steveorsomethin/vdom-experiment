@@ -979,42 +979,10 @@ component! {TestApp,
             (div {style: {width: "100px", height: "100px", backgroundColor: "#000000"}} [
                 (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
                 (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
-                (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
-                (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
-                (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
-                (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
-                (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
-                (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
-                (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
-                (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
-                (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
-                (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
-                (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
-                (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
-                (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
-                (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
-                (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
-                (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
-                (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
-                (div {style: {width: "50px", height: "50px", backgroundColor: "#00FF00"}})
-                
-                // (Expression {model: model, index: 0, color: COLOR1})
-                // (div)
-                // {
-                //     model.expressions.iter().enumerate().map(|(expression, index)| element!{
-                //         (Expression {model: expression, index: index})
-                //     })
-                // }
             ])
         ])
     }
 }
-
-// type ExpressionDescriptor = ComponentDescriptor<Expression, ExpressionArguments, EmptyDescriptor, ComponentDescriptor<div, EmptyArguments, EmptyDescriptor, EmptyDescriptor>>
-// ExpressionComponent<ExpressionDescriptor, EmptyComponent, div<EmptyComponent>, EmptyComponent>::Component>
-
-// DOMComponent<ComponentDescriptor<div<Arguments, ChildDescriptor, SiblingDescriptor>, Arguments, ChildDescriptor, SiblingDescriptor>, <<ChildDescriptor as Descriptor>::Constructor as ComponentConstructor>::Component, <<SiblingDescriptor as Descriptor>::Constructor as ComponentConstructor>::Component>
-// DOMComponent<_, &<<ChildDescriptor as Descriptor>::Constructor as ComponentConstructor>::Component, &<<SiblingDescriptor as Descriptor>::Constructor as ComponentConstructor>::Component>
 
 // Component
 use std::marker::PhantomData;
@@ -1229,82 +1197,6 @@ impl<DescriptorT, ChildComponent, SiblingComponent> Component for DOMComponent<D
 }
 // DOM
 
-
-// struct ExpressionArguments {
-//     model: ExpressionModel,
-//     index: usze,
-//     color: i32
-// }
-// struct Expression;
-// struct ExpressionComponent {
-//     descriptor: ComponentDescriptor
-// }
-
-// impl Component for ExpressionComponent {
-//     type Descriptor = Expression;
-
-//     fn mount() {
-
-//     }
-
-//     fn update(&mut self, descriptor: Self::Descriptor) {
-
-//     }
-// }
-
-// impl Element for Expression {
-//     type Component = ExpressionComponent;
-
-//     fn create_component(descriptor: Self) -> Self::Component {
-//         ExpressionComponent {
-//             descriptor: descriptor
-//         }
-//     }
-// }
-
-// ComponentDescriptor<div, EmptyAttributes, EmptyElement, EmptyElement>
-// ComponentDescriptor<Expression, EmptyAttributes, EmptyElement, ComponentDescriptor<div, EmptyAttributes, EmptyElement, EmptyElement>>
-
-// pub struct ElementNode<S, C, R> where S: Styles, C: Elements, R: Elements {
-//     tag: HTMLTag,
-//     element_id: i32,
-//     styles: S,
-//     children: C,
-//     sibling: R
-// }
-
-// impl<S, C> ElementNode<S, C, EmptyElements> where S: Styles, C: Elements {
-//     #[inline]
-//     pub fn new(tag: HTMLTag, children: C, styles: S)
-//                -> ElementNode<S, C, EmptyElements>
-//     {
-//         ElementNode {
-//             tag: tag,
-//             element_id: -1,
-//             styles: styles,
-//             children: children,
-//             sibling: EmptyElements
-//         }
-//     }
-// }
-
-// impl<S, C, R> ElementNode<S, C, R> where S: Styles, C: Elements, R: Elements {
-//     #[inline]
-//     pub fn add_sibling<G, U>(self, args: (HTMLTag, G, U))
-//                   -> ElementNode<U, G, ElementNode<S, C, R>>
-//                   where G: Elements, U: Styles
-//     {
-//         let (tag, children, styles) = args;
-//         ElementNode {
-//             tag: tag,
-//             element_id: -1,
-//             styles: styles,
-//             children: children,
-//             sibling: self
-//         }
-//     }
-// }
-
 use std::ptr;
 use std::default::Default;
 #[no_mangle]
@@ -1321,7 +1213,6 @@ pub fn run_demo(prev: *mut TestApp) -> *mut TestApp {
     let mount_end = unsafe{now()};
 
     println!("Elapsed: {}", (mount_end - mount_start));
-    // let hmm = Woo::<<Blah<i32> as Butts>::Yay> {a: Ehh{b: 0}, ..Default::default()};
     Box::into_raw(app)
 }
 
